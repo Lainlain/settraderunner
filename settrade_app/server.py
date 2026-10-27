@@ -1,6 +1,7 @@
 """Local HTTP server. GET routes return Settrade API data."""
 
 import json
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Lock
 from urllib.parse import parse_qs, urlparse
@@ -186,6 +187,10 @@ class Handler(BaseHTTPRequestHandler):
             _log(f"[settrade] FAILED {exc}")
             status = exc.status_code if 400 <= exc.status_code < 600 else 502
             status, body = status, {"error": str(exc), "code": exc.code}
+        except Exception as exc:
+            _log(f"[settrade] FAILED {type(exc).__name__}: {exc}")
+            traceback.print_exc()
+            status, body = 500, {"error": f"{type(exc).__name__}: {exc}"}
         payload = json.dumps(body, indent=2, default=str, ensure_ascii=False).encode(
             "utf-8"
         )

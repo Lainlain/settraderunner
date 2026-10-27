@@ -64,6 +64,10 @@ class SettradeClient:
             )
         except SettradeError as exc:
             raise ConfigError(f"Settrade login failed: {exc}") from exc
+        except Exception as exc:
+            raise ConfigError(
+                f"Settrade login crashed: {type(exc).__name__}: {exc}"
+            ) from exc
 
         self.market = self.investor.MarketData()
         self._equity = None
