@@ -108,6 +108,8 @@ def _endpoint_catalog() -> dict:
 ROUTES = (
     "GET /",
     "GET /api/quote?symbol=PTT",
+    "GET /api/set",
+    "GET /api/value?symbol=PTT",
     "GET /api/candles?symbol=PTT&interval=1d&limit=10",
     "GET /api/account",
     "GET /api/orders",
@@ -123,6 +125,8 @@ DATA_ROUTES = {
     "/",
     "/api",
     "/api/quote",
+    "/api/set",
+    "/api/value",
     "/api/candles",
     "/api/account",
     "/api/orders",
@@ -160,6 +164,8 @@ def build_response(path: str) -> tuple[int, dict]:
 
     actions = {
         "/api/quote": lambda: client.quote(symbol),
+        "/api/set": lambda: client.set_index(query.get("market") or "SET"),
+        "/api/value": lambda: client.price_info(symbol),
         "/api/candles": lambda: client.candlesticks(
             symbol, interval=interval, limit=limit
         ),

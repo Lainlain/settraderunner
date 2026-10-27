@@ -1,5 +1,7 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from threading import Event
 from typing import Any
 
 import ntplib
@@ -53,6 +55,14 @@ class ApiResult:
     method: str
     endpoint: str
     data: Any
+
+
+def _money(value: Any) -> Any:
+    if isinstance(value, dict) and ("units" in value or "nanos" in value):
+        units = float(value.get("units") or 0)
+        nanos = float(value.get("nanos") or 0) / 1_000_000_000
+        return units + nanos
+    return value
 
 
 def _call(action) -> dict[str, Any]:
@@ -109,7 +119,88 @@ class SettradeClient:
     def quote(self, symbol: str) -> ApiResult:
         symbol = symbol.strip().upper()
         endpoint = f"{self.market_url}/quote/{symbol}"
-        return ApiResult("GET", endpoint, self.market.get_quote_symbol(symbol))
+        data = self.market.get_quote_symbol(symbol)
+        if isinstance(data, dict):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                value_task = pool.submit(self._symbol_value, symbol)
+                set_task = pool.submit(self._set_index)
+                data["value"] = value_task.result()
+                data["set"] = set_task.result()
+        return ApiResult("GET", endpoint, data)
+
+    def price_info(self, symbol: str, timeout: float = 8) -> ApiResult:
+        symbol = symbol.strip().upper()
+        realtime = self.investor.RealtimeDataConnection()
+        message = self._listen_once(
+            lambda on_message: realtime.subscribe_price_info(symbol, on_message),
+            timeout=timeout,
+        )
+        return ApiResult("MQTT", f"proto/topic/infov3/{symbol}", message)
+
+    def set_index(self, market: str = "SET", timeout: float = 8) -> ApiResult:
+        market = market.strip().upper() or "SET"
+        realtime = self.investor.RealtimeDataConnection()
+        message = self._listen_once(
+            lambda on_message: realtime.subscribe_equity_exchange_info(
+                market, on_message
+            ),
+            timeout=timeout,
+        )
+        return ApiResult("MQTT", f"proto/topic/exchinfoeqv3/{market}", message)
+
+    def _symbol_value(self, symbol: str) -> Any:
+        try:
+            message = self.price_info(symbol).data
+        except (SettradeError, ConfigError, OSError) as exc:
+            return {"error": str(exc)}
+        if not isinstance(message, dict) or not message.get("is_success"):
+            detail = message.get("message") if isinstance(message, dict) else message
+            return {"error": detail or message}
+        payload = message.get("data") or {}
+        return _money(payload.get("total_value"))
+
+    def _set_index(self) -> Any:
+        try:
+            message = self.set_index().data
+        except (SettradeError, ConfigError, OSError) as exc:
+            return {"error": str(exc)}
+        if not isinstance(message, dict) or not message.get("is_success"):
+            detail = message.get("message") if isinstance(message, dict) else message
+            return {"error": detail or message}
+        info = (message.get("data") or {}).get("market_info") or {}
+        return {
+            "name": info.get("name") or "SET",
+            "current": _money(info.get("current")),
+            "high": _money(info.get("high")),
+            "low": _money(info.get("low")),
+            "change": _money(info.get("change")),
+            "percentChange": _money(info.get("percent_change")),
+            "totalVolume": info.get("total_index_volume"),
+            "value": _money(info.get("total_index_value")),
+            "marketStatus": info.get("market_status"),
+        }
+
+    def _listen_once(self, subscribe, timeout: float) -> dict[str, Any]:
+        done = Event()
+        box: dict[str, Any] = {}
+
+        def on_message(message: dict[str, Any]) -> None:
+            if done.is_set():
+                return
+            box["message"] = message
+            done.set()
+
+        subscriber = subscribe(on_message)
+        subscriber.start()
+        try:
+            if not done.wait(timeout):
+                return {
+                    "is_success": False,
+                    "message": "No realtime message arrived before the timeout.",
+                }
+            return box["message"]
+        finally:
+            subscriber.stop()
 
     def candlesticks(
         self,
