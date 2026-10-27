@@ -66,6 +66,13 @@ def _money(value: Any) -> Any:
     return value
 
 
+def _pick(data: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if data.get(name) not in (None, ""):
+            return data[name]
+    return None
+
+
 def _flatten(value: Any) -> Any:
     if isinstance(value, dict):
         amount = _money(value)
@@ -138,7 +145,14 @@ class SettradeClient:
                 if value is None and data.get(key) not in (None, ""):
                     continue
                 data[key] = value
+            data["volume"] = _pick(
+                data, "volume", "total_volume", "totalVolume", "total_index_volume"
+            )
+            data["total_value"] = _pick(
+                data, "total_value", "totalValue", "total_index_value", "value"
+            )
             data.setdefault("last", None)
+            data.setdefault("volume", None)
             data.setdefault("total_value", None)
         return ApiResult("GET", endpoint, data)
 
@@ -171,7 +185,7 @@ class SettradeClient:
             return {
                 "name": "SET",
                 "last": None,
-                "value": None,
+                "volume": None,
                 "total_value": None,
                 "realtime_error": detail or "SET index was not received.",
             }
@@ -180,14 +194,16 @@ class SettradeClient:
         if not isinstance(info, dict):
             info = payload if isinstance(payload, dict) else {}
         fields = dict(info)
-        current = fields.get("current")
-        total = fields.get("total_index_value")
-        fields["last"] = current
-        fields["value"] = total
-        fields["total_value"] = total
+        fields["last"] = _pick(fields, "last", "current")
+        fields["volume"] = _pick(
+            fields, "volume", "total_index_volume", "total_volume", "totalVolume"
+        )
+        fields["total_value"] = _pick(
+            fields, "total_value", "total_index_value", "totalValue", "value"
+        )
         fields.setdefault("name", "SET")
         fields.setdefault("last", None)
-        fields.setdefault("value", None)
+        fields.setdefault("volume", None)
         fields.setdefault("total_value", None)
         return fields
 
@@ -322,14 +338,23 @@ class SettradeClient:
             if on_result is not None:
                 on_result(name, item)
             bodies[name] = item.get("data", item)
-        quote = bodies.get("quote") if isinstance(bodies.get("quote"), dict) else {}
         market = bodies.get("set") if isinstance(bodies.get("set"), dict) else {}
+        set_rest = {
+            key: value
+            for key, value in market.items()
+            if key not in ("last", "volume", "total_value")
+        }
+        bodies.pop("set", None)
         return {
+            "set": {
+                "last": market.get("last"),
+                "volume": market.get("volume"),
+                "total_value": market.get("total_value"),
+                **set_rest,
+            },
+            "volume": market.get("volume"),
+            "total_value": market.get("total_value"),
             "symbol": symbol,
-            "last": quote.get("last"),
-            "total_value": quote.get("total_value"),
-            "value": market.get("value"),
-            "set": market,
             "interval": interval,
             "limit": limit,
             **bodies,
