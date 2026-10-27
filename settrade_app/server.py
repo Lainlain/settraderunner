@@ -15,11 +15,31 @@ _client: SettradeClient | None = None
 _lock = Lock()
 
 
+def _log(message: str) -> None:
+    print(message, flush=True)
+
+
+def _log_settrade(name: str, body: dict) -> None:
+    if body.get("error") and "data" not in body:
+        _log(f"[settrade] {name} FAILED")
+        _log(body["error"])
+        return
+    _log(f"[settrade] {name} {body.get('method', 'GET')} {body.get('endpoint', '')}")
+    _log(json.dumps(body.get("data"), indent=2, default=str, ensure_ascii=False))
+
+
 def get_client() -> SettradeClient:
     global _client
     with _lock:
         if _client is None:
+            _log("[settrade] logging in")
             _client = SettradeClient(Settings.from_env(), is_auto_queue=True)
+            _log(
+                "[settrade] logged in "
+                f"broker={_client.broker_id} "
+                f"open_api={_client.open_api_url} "
+                f"market={_client.market_url}"
+            )
         return _client
 
 
@@ -129,7 +149,13 @@ def build_response(path: str) -> tuple[int, dict]:
     limit = _limit(query)
 
     if route in ("/", "/api"):
-        return 200, client.fetch_all(symbol, interval=interval, limit=limit)
+        _log(f"[settrade] fetching all data symbol={symbol} interval={interval}")
+        return 200, client.fetch_all(
+            symbol,
+            interval=interval,
+            limit=limit,
+            on_result=_log_settrade,
+        )
 
     actions = {
         "/api/quote": lambda: client.quote(symbol),
@@ -144,7 +170,9 @@ def build_response(path: str) -> tuple[int, dict]:
         "/api/derivatives/orders": client.derivatives_orders,
         "/api/derivatives/portfolios": client.derivatives_portfolios,
     }
-    return 200, _payload(actions[route]())
+    body = _payload(actions[route]())
+    _log_settrade(route, body)
+    return 200, body
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -152,8 +180,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             status, body = build_response(self.path)
         except ConfigError as exc:
+            _log(f"[settrade] FAILED {exc}")
             status, body = 400, {"error": str(exc)}
         except SettradeError as exc:
+            _log(f"[settrade] FAILED {exc}")
             status = exc.status_code if 400 <= exc.status_code < 600 else 502
             status, body = status, {"error": str(exc), "code": exc.code}
         payload = json.dumps(body, indent=2, default=str, ensure_ascii=False).encode(

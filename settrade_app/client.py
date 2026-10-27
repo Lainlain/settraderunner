@@ -126,6 +126,7 @@ class SettradeClient:
         symbol: str = "PTT",
         interval: str = "1d",
         limit: int = 10,
+        on_result=None,
     ) -> dict[str, Any]:
         """Call every read API and keep each raw response."""
         symbol = symbol.strip().upper() or "PTT"
@@ -142,6 +143,12 @@ class SettradeClient:
             "derivatives_orders": self.derivatives_orders,
             "derivatives_portfolios": self.derivatives_portfolios,
         }
+        apis: dict[str, Any] = {}
+        for name, action in calls.items():
+            item = _call(action)
+            apis[name] = item
+            if on_result is not None:
+                on_result(name, item)
         return {
             "open_api": self.open_api_url,
             "market": self.market_url,
@@ -149,7 +156,7 @@ class SettradeClient:
             "symbol": symbol,
             "interval": interval,
             "limit": limit,
-            "apis": {name: _call(action) for name, action in calls.items()},
+            "apis": apis,
         }
 
     def derivatives_portfolios(self) -> ApiResult:
