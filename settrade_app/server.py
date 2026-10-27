@@ -153,17 +153,16 @@ def build_response(path: str) -> tuple[int, dict]:
     interval = _interval(query)
     limit = _limit(query)
 
-    if route in ("/", "/api"):
-        _log(f"[settrade] fetching all data symbol={symbol} interval={interval}")
-        return 200, client.fetch_all(
-            symbol,
-            interval=interval,
-            limit=limit,
-            on_result=_log_settrade,
+    if route in ("/", "/api", "/api/quote"):
+        result = client.quote(symbol)
+        body = result.data if isinstance(result.data, dict) else {"quote": result.data}
+        _log_settrade(
+            "quote",
+            {"method": result.method, "endpoint": result.endpoint, "data": body},
         )
+        return 200, body
 
     actions = {
-        "/api/quote": lambda: client.quote(symbol),
         "/api/set": lambda: client.set_index(query.get("market") or "SET"),
         "/api/value": lambda: client.price_info(symbol),
         "/api/candles": lambda: client.candlesticks(

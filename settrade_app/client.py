@@ -135,6 +135,8 @@ class SettradeClient:
         if isinstance(data, dict):
             live = self._live_price_fields(symbol)
             for key, value in live.items():
+                if value is None and data.get(key) not in (None, ""):
+                    continue
                 data[key] = value
             data.setdefault("last", None)
             data.setdefault("total_value", None)
