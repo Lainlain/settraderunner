@@ -1,5 +1,4 @@
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Event
 from typing import Any
@@ -58,10 +57,23 @@ class ApiResult:
 
 
 def _money(value: Any) -> Any:
-    if isinstance(value, dict) and ("units" in value or "nanos" in value):
+    if isinstance(value, dict) and set(value) <= {"units", "nanos"} and (
+        "units" in value or "nanos" in value
+    ):
         units = float(value.get("units") or 0)
         nanos = float(value.get("nanos") or 0) / 1_000_000_000
         return units + nanos
+    return value
+
+
+def _flatten(value: Any) -> Any:
+    if isinstance(value, dict):
+        amount = _money(value)
+        if amount is not value:
+            return amount
+        return {key: _flatten(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_flatten(item) for item in value]
     return value
 
 
@@ -121,21 +133,17 @@ class SettradeClient:
         endpoint = f"{self.market_url}/quote/{symbol}"
         data = self.market.get_quote_symbol(symbol)
         if isinstance(data, dict):
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                value_task = pool.submit(self._symbol_value, symbol)
-                set_task = pool.submit(self._set_index)
-                data["value"] = value_task.result()
-                data["set"] = set_task.result()
+            live = self._live_price_fields(symbol)
+            for key, value in live.items():
+                data[key] = value
+            data.setdefault("last", None)
+            data.setdefault("total_value", None)
         return ApiResult("GET", endpoint, data)
 
     def price_info(self, symbol: str, timeout: float = 8) -> ApiResult:
         symbol = symbol.strip().upper()
-        realtime = self.investor.RealtimeDataConnection()
-        message = self._listen_once(
-            lambda on_message: realtime.subscribe_price_info(symbol, on_message),
-            timeout=timeout,
-        )
-        return ApiResult("MQTT", f"proto/topic/infov3/{symbol}", message)
+        fields = self._live_price_fields(symbol, timeout=timeout)
+        return ApiResult("MQTT", f"proto/topic/infov3/{symbol}", fields)
 
     def set_index(self, market: str = "SET", timeout: float = 8) -> ApiResult:
         market = market.strip().upper() or "SET"
@@ -148,37 +156,28 @@ class SettradeClient:
         )
         return ApiResult("MQTT", f"proto/topic/exchinfoeqv3/{market}", message)
 
-    def _symbol_value(self, symbol: str) -> Any:
+    def _live_price_fields(self, symbol: str, timeout: float = 8) -> dict[str, Any]:
         try:
-            message = self.price_info(symbol).data
+            realtime = self.investor.RealtimeDataConnection()
+            message = self._listen_once(
+                lambda on_message: realtime.subscribe_price_info(symbol, on_message),
+                timeout=timeout,
+            )
         except (SettradeError, ConfigError, OSError) as exc:
-            return {"error": str(exc)}
+            return {"last": None, "total_value": None, "realtime_error": str(exc)}
         if not isinstance(message, dict) or not message.get("is_success"):
             detail = message.get("message") if isinstance(message, dict) else message
-            return {"error": detail or message}
-        payload = message.get("data") or {}
-        return _money(payload.get("total_value"))
-
-    def _set_index(self) -> Any:
-        try:
-            message = self.set_index().data
-        except (SettradeError, ConfigError, OSError) as exc:
-            return {"error": str(exc)}
-        if not isinstance(message, dict) or not message.get("is_success"):
-            detail = message.get("message") if isinstance(message, dict) else message
-            return {"error": detail or message}
-        info = (message.get("data") or {}).get("market_info") or {}
-        return {
-            "name": info.get("name") or "SET",
-            "current": _money(info.get("current")),
-            "high": _money(info.get("high")),
-            "low": _money(info.get("low")),
-            "change": _money(info.get("change")),
-            "percentChange": _money(info.get("percent_change")),
-            "totalVolume": info.get("total_index_volume"),
-            "value": _money(info.get("total_index_value")),
-            "marketStatus": info.get("market_status"),
-        }
+            return {
+                "last": None,
+                "total_value": None,
+                "realtime_error": detail or "Realtime price was not received.",
+            }
+        payload = _flatten(message.get("data") or {})
+        if not isinstance(payload, dict):
+            return {"last": None, "total_value": None, "realtime_error": payload}
+        payload.setdefault("last", None)
+        payload.setdefault("total_value", None)
+        return payload
 
     def _listen_once(self, subscribe, timeout: float) -> dict[str, Any]:
         done = Event()
