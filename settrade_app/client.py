@@ -1,10 +1,31 @@
+import time
 from dataclasses import dataclass
 from typing import Any
 
+import ntplib
+import settrade_v2.context as settrade_context
 from settrade_v2 import Investor
 from settrade_v2.errors import SettradeError
 
 from .settings import ConfigError, Settings
+
+
+def _use_network_clock() -> None:
+    """Settrade rejects login when the machine clock is more than a few seconds off."""
+    if getattr(settrade_context, "_network_clock", False):
+        return
+    offset_ms = 0
+    try:
+        packet = ntplib.NTPClient().request("2.asia.pool.ntp.org", version=3)
+        offset_ms = int(packet.tx_time * 1000) - int(time.time() * 1000)
+    except OSError:
+        offset_ms = 0
+
+    def timestamp() -> str:
+        return str(int(time.time() * 1000) + offset_ms)
+
+    settrade_context.get_current_milli_timestamp_str = timestamp
+    settrade_context._network_clock = True
 
 
 @dataclass
@@ -32,6 +53,7 @@ class SettradeClient:
     def __init__(self, settings: Settings, is_auto_queue: bool = False):
         settings.require_credentials()
         self.settings = settings
+        _use_network_clock()
         try:
             self.investor = Investor(
                 app_id=settings.app_id,

@@ -5,7 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+load_dotenv(ROOT / ".env", override=True)
 
 
 class ConfigError(Exception):
@@ -23,7 +23,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        load_dotenv(ROOT / ".env")
+        load_dotenv(ROOT / ".env", override=True)
         return cls(
             app_id=os.getenv("SETTRADE_APP_ID", "").strip(),
             app_secret=os.getenv("SETTRADE_APP_SECRET", "").strip(),
