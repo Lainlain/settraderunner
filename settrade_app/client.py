@@ -28,6 +28,26 @@ def _use_network_clock() -> None:
     settrade_context._network_clock = True
 
 
+def _skip_broken_version_check() -> None:
+    """The SDK crashes when the version URL returns an empty body."""
+    if getattr(settrade_context.Context, "_version_guard", False):
+        return
+
+    original = settrade_context.Context._check_version
+
+    def _check_version(self) -> None:
+        try:
+            original(self)
+        except Exception as exc:
+            print(
+                f"[settrade] skipped SDK version check: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
+
+    settrade_context.Context._check_version = _check_version
+    settrade_context.Context._version_guard = True
+
+
 @dataclass
 class ApiResult:
     method: str
@@ -54,6 +74,7 @@ class SettradeClient:
         settings.require_credentials()
         self.settings = settings
         _use_network_clock()
+        _skip_broken_version_check()
         try:
             self.investor = Investor(
                 app_id=settings.app_id,
