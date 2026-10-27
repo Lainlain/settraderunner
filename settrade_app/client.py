@@ -149,14 +149,47 @@ class SettradeClient:
 
     def set_index(self, market: str = "SET", timeout: float = 8) -> ApiResult:
         market = market.strip().upper() or "SET"
-        realtime = self.investor.RealtimeDataConnection()
-        message = self._listen_once(
-            lambda on_message: realtime.subscribe_equity_exchange_info(
-                market, on_message
-            ),
-            timeout=timeout,
+        try:
+            realtime = self.investor.RealtimeDataConnection()
+            message = self._listen_once(
+                lambda on_message: realtime.subscribe_equity_exchange_info(
+                    market, on_message
+                ),
+                timeout=timeout,
+            )
+        except (SettradeError, ConfigError, OSError) as exc:
+            message = {"is_success": False, "message": str(exc)}
+        return ApiResult(
+            "MQTT",
+            f"proto/topic/exchinfoeqv3/{market}",
+            self._set_fields(message),
         )
-        return ApiResult("MQTT", f"proto/topic/exchinfoeqv3/{market}", message)
+
+    def _set_fields(self, message: Any) -> dict[str, Any]:
+        if not isinstance(message, dict) or not message.get("is_success"):
+            detail = message.get("message") if isinstance(message, dict) else message
+            return {
+                "name": "SET",
+                "last": None,
+                "value": None,
+                "total_value": None,
+                "realtime_error": detail or "SET index was not received.",
+            }
+        payload = _flatten(message.get("data") or {})
+        info = payload.get("market_info") if isinstance(payload, dict) else None
+        if not isinstance(info, dict):
+            info = payload if isinstance(payload, dict) else {}
+        fields = dict(info)
+        current = fields.get("current")
+        total = fields.get("total_index_value")
+        fields["last"] = current
+        fields["value"] = total
+        fields["total_value"] = total
+        fields.setdefault("name", "SET")
+        fields.setdefault("last", None)
+        fields.setdefault("value", None)
+        fields.setdefault("total_value", None)
+        return fields
 
     def _live_price_fields(self, symbol: str, timeout: float = 8) -> dict[str, Any]:
         try:
@@ -282,20 +315,24 @@ class SettradeClient:
             "derivatives_orders": self.derivatives_orders,
             "derivatives_portfolios": self.derivatives_portfolios,
         }
-        apis: dict[str, Any] = {}
+        calls["set"] = lambda: self.set_index()
+        bodies: dict[str, Any] = {}
         for name, action in calls.items():
             item = _call(action)
-            apis[name] = item
             if on_result is not None:
                 on_result(name, item)
+            bodies[name] = item.get("data", item)
+        quote = bodies.get("quote") if isinstance(bodies.get("quote"), dict) else {}
+        market = bodies.get("set") if isinstance(bodies.get("set"), dict) else {}
         return {
-            "open_api": self.open_api_url,
-            "market": self.market_url,
-            "broker_id": self.broker_id,
             "symbol": symbol,
+            "last": quote.get("last"),
+            "total_value": quote.get("total_value"),
+            "value": market.get("value"),
+            "set": market,
             "interval": interval,
             "limit": limit,
-            "apis": apis,
+            **bodies,
         }
 
     def derivatives_portfolios(self) -> ApiResult:
