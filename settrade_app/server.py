@@ -166,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def log_message(self, fmt: str, *args) -> None:
-        print(f"{self.address_string()} {fmt % args}")
+        print(f"[request] {self.address_string()} {fmt % args}", flush=True)
 
 
 def serve(host: str = "127.0.0.1", port: int = 1717) -> None:
@@ -174,6 +174,11 @@ def serve(host: str = "127.0.0.1", port: int = 1717) -> None:
     print(f"Settrade server  http://{host}:{port}", flush=True)
     print(f"All API data     http://{host}:{port}/", flush=True)
     print(f"Loaded env from  {ROOT / '.env'}", flush=True)
+    print("Listening. The server stays quiet until a request arrives.", flush=True)
+    print(
+        f"Test from this machine: curl -sS http://127.0.0.1:{port}/api/endpoints",
+        flush=True,
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:
