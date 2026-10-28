@@ -217,7 +217,7 @@ class Handler(BaseHTTPRequestHandler):
         print(f"[request] {self.address_string()} {fmt % args}", flush=True)
 
 
-def serve(host: str = "127.0.0.1", port: int = 1717) -> None:
+def serve(host: str = "127.0.0.1", port: int = 8080) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Settrade server  http://{host}:{port}", flush=True)
     print(f"SET last and value  http://{host}:{port}/", flush=True)

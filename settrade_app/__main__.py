@@ -64,7 +64,7 @@ def main(argv: list[str] | None = None) -> None:
 
     serve = sub.add_parser("serve", help="Start the local GET server.")
     serve.add_argument("--host", default="127.0.0.1")
-    serve.add_argument("--port", type=int, default=1717)
+    serve.add_argument("--port", type=int, default=8080)
 
     quote = sub.add_parser("quote", help="Get the latest quote for a symbol.")
     quote.add_argument("symbol", help="Symbol, for example PTT or S50Z25.")
