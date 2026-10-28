@@ -1,5 +1,9 @@
+import json
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
+from http.cookiejar import CookieJar
 from threading import Event
 from typing import Any
 
@@ -151,14 +155,14 @@ def _number(value: Any) -> float | None:
         return None
 
 
-def _quantity_000_shares(volume: Any) -> float | None:
-    """SET table shows quantity in thousands of shares."""
+def _quantity_000_shares(volume: Any) -> int | None:
+    """SET table shows quantity as a whole number of thousands of shares."""
     number = _number(volume)
     if number is None:
         return None
     if abs(number) >= 1_000_000_000:
-        return round(number / 1_000, 2)
-    return number
+        number = number / 1_000
+    return int(round(number))
 
 
 def _value_million_baht(value: Any) -> float | None:
@@ -169,6 +173,68 @@ def _value_million_baht(value: Any) -> float | None:
     if abs(number) >= 1_000_000_000:
         return round(number / 1_000_000, 2)
     return round(number, 2)
+
+
+def _website_headers(referer: str) -> dict[str, str]:
+    return {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,th-TH;q=0.8",
+        "Referer": referer,
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+    }
+
+
+def _website_index(symbol: str = "SET") -> dict[str, Any]:
+    """Read the SET index page header from set.or.th.
+
+    That JSON is the table on the website. Volume is shares and value is baht.
+    """
+    symbol = symbol.strip().upper() or "SET"
+    page = f"https://www.set.or.th/en/market/index/{symbol.lower()}/overview"
+    endpoint = f"https://www.set.or.th/api/set/index/{symbol}/info?language=en"
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    try:
+        warm = urllib.request.Request(page, headers=_website_headers(page))
+        opener.open(warm, timeout=20).read()
+        request = urllib.request.Request(endpoint, headers=_website_headers(page))
+        with opener.open(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeError) as exc:
+        return {
+            "index": symbol,
+            "latest": None,
+            "last": None,
+            "change": None,
+            "volume": None,
+            "total_value": None,
+            "website_error": f"{type(exc).__name__}: {exc}",
+            "_endpoint": endpoint,
+        }
+    if not isinstance(payload, dict) or payload.get("last") in (None, ""):
+        return {
+            "index": symbol,
+            "latest": None,
+            "last": None,
+            "change": None,
+            "volume": None,
+            "total_value": None,
+            "website_error": "set.or.th did not return the SET index.",
+            "_endpoint": endpoint,
+        }
+    latest = _number(payload.get("last"))
+    row = dict(payload)
+    row["index"] = payload.get("symbol") or symbol
+    row["latest"] = latest
+    row["last"] = latest
+    row["change"] = _number(payload.get("change"))
+    row["volume"] = _quantity_000_shares(payload.get("volume"))
+    row["total_value"] = _value_million_baht(payload.get("value"))
+    row["_endpoint"] = endpoint
+    return row
 
 
 def _pick(data: dict[str, Any], *names: str) -> Any:
@@ -268,6 +334,20 @@ class SettradeClient:
 
     def set_index(self, market: str = "SET", timeout: float = 8) -> ApiResult:
         market = market.strip().upper() or "SET"
+        website = _website_index(market)
+        endpoint = str(website.pop("_endpoint", ""))
+        if website.get("last") is not None:
+            print(
+                f"[settrade] SET index from set.or.th last={website.get('last')} "
+                f"change={website.get('change')} volume={website.get('volume')} "
+                f"total_value={website.get('total_value')}",
+                flush=True,
+            )
+            return ApiResult("GET", endpoint, website)
+        print(
+            f"[settrade] set.or.th index failed: {website.get('website_error')}",
+            flush=True,
+        )
         try:
             realtime = self.investor.RealtimeDataConnection()
             message = self._listen_once(
@@ -278,11 +358,9 @@ class SettradeClient:
             )
         except (SettradeError, ConfigError, OSError) as exc:
             message = {"is_success": False, "message": str(exc)}
-        return ApiResult(
-            "MQTT",
-            f"proto/topic/exchinfoeqv3/{market}",
-            self._set_fields(message),
-        )
+        fields = self._set_fields(message)
+        fields["website_error"] = website.get("website_error")
+        return ApiResult("MQTT", f"proto/topic/exchinfoeqv3/{market}", fields)
 
     def _set_fields(self, message: Any) -> dict[str, Any]:
         if not isinstance(message, dict) or not message.get("is_success"):
