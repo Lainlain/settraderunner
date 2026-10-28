@@ -243,15 +243,17 @@ def _website_index(symbol: str = "SET") -> dict[str, Any]:
 
 
 def set_numbers() -> dict[str, Any]:
-    """Latest SET index and value in million baht from set.or.th."""
+    """SET index and value in million baht. Only these two keys."""
     row = _website_index("SET")
-    body = {
-        "last": None if row.get("last") is None else round(float(row["last"]), 2),
-        "total_value": row.get("total_value"),
-    }
     if row.get("last") is None:
-        body["error"] = row.get("website_error") or "set.or.th did not return the SET index."
-    return body
+        print(
+            f"[settrade] {row.get('website_error') or 'set.or.th did not return the SET index.'}",
+            flush=True,
+        )
+    return {
+        "set": None if row.get("last") is None else round(float(row["last"]), 2),
+        "value": row.get("total_value"),
+    }
 
 
 def _pick(data: dict[str, Any], *names: str) -> Any:

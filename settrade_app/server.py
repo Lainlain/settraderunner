@@ -152,10 +152,8 @@ def build_response(path: str) -> tuple[int, dict]:
         body = set_numbers()
         _log(
             "[settrade] GET https://www.set.or.th/api/set/index/SET/info "
-            f"last={body.get('last')} total_value={body.get('total_value')}"
+            f"set={body.get('set')} value={body.get('value')}"
         )
-        if body.get("error"):
-            return 502, body
         return 200, body
 
     client = get_client()
