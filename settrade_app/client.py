@@ -242,6 +242,14 @@ def _website_index(symbol: str = "SET") -> dict[str, Any]:
     return row
 
 
+def _two_decimals(value: Any) -> str | None:
+    """Keep the last digit when it is 0. JSON numbers drop 1571.40 down to 1571.4."""
+    number = _number(value)
+    if number is None:
+        return None
+    return f"{number:.2f}"
+
+
 def set_numbers() -> dict[str, Any]:
     """SET index and value in million baht. Only these two keys."""
     row = _website_index("SET")
@@ -251,8 +259,8 @@ def set_numbers() -> dict[str, Any]:
             flush=True,
         )
     return {
-        "set": None if row.get("last") is None else round(float(row["last"]), 2),
-        "value": row.get("total_value"),
+        "set": _two_decimals(row.get("last")),
+        "value": _two_decimals(row.get("total_value")),
     }
 
 
