@@ -1,9 +1,6 @@
 import json
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
-from http.cookiejar import CookieJar
 from threading import Event
 from typing import Any
 
@@ -175,56 +172,64 @@ def _value_million_baht(value: Any) -> float | None:
     return round(number, 2)
 
 
-def _website_headers(referer: str) -> dict[str, str]:
+def _empty_set(symbol: str, endpoint: str, error: str) -> dict[str, Any]:
     return {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9,th-TH;q=0.8",
-        "Referer": referer,
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
+        "index": symbol,
+        "latest": None,
+        "last": None,
+        "change": None,
+        "volume": None,
+        "total_value": None,
+        "website_error": error,
+        "_endpoint": endpoint,
     }
 
 
 def _website_index(symbol: str = "SET") -> dict[str, Any]:
-    """Read the SET index page header from set.or.th.
+    """Read https://www.set.or.th/api/set/index/SET/info with a browser TLS fingerprint.
 
-    That JSON is the table on the website. Volume is shares and value is baht.
+    Plain curl is blocked by Incapsula and returns an HTML wall instead of JSON.
     """
     symbol = symbol.strip().upper() or "SET"
     page = f"https://www.set.or.th/en/market/index/{symbol.lower()}/overview"
-    endpoint = f"https://www.set.or.th/api/set/index/{symbol}/info?language=en"
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+    endpoint = f"https://www.set.or.th/api/set/index/{symbol}/info"
     try:
-        warm = urllib.request.Request(page, headers=_website_headers(page))
-        opener.open(warm, timeout=20).read()
-        request = urllib.request.Request(endpoint, headers=_website_headers(page))
-        with opener.open(request, timeout=20) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, json.JSONDecodeError, UnicodeError) as exc:
-        return {
-            "index": symbol,
-            "latest": None,
-            "last": None,
-            "change": None,
-            "volume": None,
-            "total_value": None,
-            "website_error": f"{type(exc).__name__}: {exc}",
-            "_endpoint": endpoint,
-        }
+        from curl_cffi import requests as curl_requests
+    except ImportError:
+        return _empty_set(
+            symbol,
+            endpoint,
+            "Install curl_cffi: python3 -m pip install curl_cffi",
+        )
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,th-TH;q=0.8",
+        "Referer": page,
+    }
+    try:
+        session = curl_requests.Session(impersonate="chrome")
+        session.get(
+            page,
+            headers={**headers, "Accept": "text/html,application/xhtml+xml"},
+            timeout=20,
+        )
+        response = session.get(endpoint, headers=headers, timeout=20)
+        text = response.text or ""
+    except Exception as exc:
+        return _empty_set(symbol, endpoint, f"{type(exc).__name__}: {exc}")
+    if "Incapsula" in text or text.lstrip().startswith("<"):
+        return _empty_set(
+            symbol,
+            endpoint,
+            "set.or.th returned the Incapsula block page, not JSON. "
+            "Plain curl cannot read this URL.",
+        )
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return _empty_set(symbol, endpoint, f"JSONDecodeError: {exc}")
     if not isinstance(payload, dict) or payload.get("last") in (None, ""):
-        return {
-            "index": symbol,
-            "latest": None,
-            "last": None,
-            "change": None,
-            "volume": None,
-            "total_value": None,
-            "website_error": "set.or.th did not return the SET index.",
-            "_endpoint": endpoint,
-        }
+        return _empty_set(symbol, endpoint, "set.or.th did not return the SET index.")
     latest = _number(payload.get("last"))
     row = dict(payload)
     row["index"] = payload.get("symbol") or symbol
@@ -235,6 +240,18 @@ def _website_index(symbol: str = "SET") -> dict[str, Any]:
     row["total_value"] = _value_million_baht(payload.get("value"))
     row["_endpoint"] = endpoint
     return row
+
+
+def set_numbers() -> dict[str, Any]:
+    """Latest SET index and value in million baht from set.or.th."""
+    row = _website_index("SET")
+    body = {
+        "last": None if row.get("last") is None else round(float(row["last"]), 2),
+        "total_value": row.get("total_value"),
+    }
+    if row.get("last") is None:
+        body["error"] = row.get("website_error") or "set.or.th did not return the SET index."
+    return body
 
 
 def _pick(data: dict[str, Any], *names: str) -> Any:

@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from settrade_v2.errors import SettradeError
 
-from .client import SettradeClient
+from .client import SettradeClient, set_numbers
 from .endpoints import ENDPOINTS, hosts
 from .settings import ROOT, ConfigError, Settings
 
@@ -148,6 +148,16 @@ def build_response(path: str) -> tuple[int, dict]:
     if route not in DATA_ROUTES:
         return 404, {"error": "Unknown route.", "routes": list(ROUTES)}
 
+    if route in ("/", "/api", "/api/set"):
+        body = set_numbers()
+        _log(
+            "[settrade] GET https://www.set.or.th/api/set/index/SET/info "
+            f"last={body.get('last')} total_value={body.get('total_value')}"
+        )
+        if body.get("error"):
+            return 502, body
+        return 200, body
+
     client = get_client()
     symbol = _symbol(query)
     interval = _interval(query)
@@ -212,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
 def serve(host: str = "127.0.0.1", port: int = 1717) -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Settrade server  http://{host}:{port}", flush=True)
-    print(f"All API data     http://{host}:{port}/", flush=True)
+    print(f"SET last and value  http://{host}:{port}/", flush=True)
     print(f"Loaded env from  {ROOT / '.env'}", flush=True)
     print("Listening. The server stays quiet until a request arrives.", flush=True)
     print(
